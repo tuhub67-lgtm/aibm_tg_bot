@@ -1,0 +1,6 @@
+# Зависимости проекта. Ставятся командой: pip install -r requirements.txt
+aiogram==3.13.1        # фреймворк для Telegram-ботов (с FSM)
+aiosqlite==0.20.0      # асинхронная работа с базой SQLite
+httpx==0.27.2          # HTTP-клиент для Grok и Notion API
+python-dotenv==1.0.1   # чтение настроек из файла .env
+loguru==0.7.2          # удобное логирование
