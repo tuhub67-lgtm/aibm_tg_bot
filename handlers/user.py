@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 from aiogram import F, Router
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from loguru import logger
@@ -31,6 +31,12 @@ with open(QUESTIONS_FILE, encoding="utf-8") as f:
     _data = json.load(f)
 QUESTIONS: list[dict] = _data["questions"]
 TOTAL = len(QUESTIONS)  # сколько всего вопросов
+
+# Логируем при импорте, сколько вопросов и разделов загрузилось
+logger.info(
+    f"📝 Загружено {TOTAL} вопросов из "
+    f"{len(set(q['section'] for q in QUESTIONS))} разделов"
+)
 
 
 def progress_bar(current: int) -> str:
@@ -83,6 +89,37 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     await message.answer(text, reply_markup=start_keyboard())
 
 
+@router.message(Command("help"))
+async def cmd_help(message: Message) -> None:
+    """Команда /help — описание услуг и подсказка по командам."""
+    text = (
+        "🤝 <b>Я — Тимур, делаю под ключ и сам (без команды):</b>\n\n"
+        "1️⃣ <b>ИИ Автоматизация — 35 000₽</b>\n"
+        "Боты, автоответы, обработка заявок — рутину делает не ты.\n\n"
+        "2️⃣ <b>Медиа и контент — 25 000₽</b>\n"
+        "Видео, фото, тексты, ведение соцсетей — чтобы тебя видели.\n\n"
+        "3️⃣ <b>Продающий сайт + реклама — 45 000₽</b>\n"
+        "Сайт, который продаёт, плюс настройка рекламы.\n\n"
+        "Оплата 50/50 (Сбер/Тинькофф), всё лично и по-честному.\n\n"
+        "<b>Команды:</b>\n"
+        "/start — начать и оставить заявку\n"
+        "/cancel — отменить заполнение брифа\n"
+        "/help — это сообщение"
+    )
+    await message.answer(text, reply_markup=start_keyboard())
+
+
+@router.message(Command("cancel"))
+async def cmd_cancel(message: Message, state: FSMContext) -> None:
+    """Команда /cancel — отменить бриф в любой момент."""
+    current = await state.get_state()
+    await state.clear()
+    if current is None:
+        await message.answer("Сейчас нечего отменять 🙂 Жми /start, когда будешь готов.")
+    else:
+        await message.answer("Бриф отменён. Захочешь вернуться — жми /start 🤝")
+
+
 @router.callback_query(F.data == "show_services")
 async def show_services(callback: CallbackQuery) -> None:
     """Показываем услуги и цены."""
@@ -118,8 +155,19 @@ async def handle_answer(message: Message, state: FSMContext) -> None:
     answers = data.get("answers", {})
     q = QUESTIONS[idx]
 
+    # Берём текст ответа. Если прислали стикер/фото/голосовое — text будет пустым.
+    answer = (message.text or "").strip()
+
+    # Валидация: на обязательный вопрос нельзя ответить пустотой
+    if q.get("required", False) and not answer:
+        await message.answer(
+            "Это важный вопрос 🙏 Напиши, пожалуйста, ответ текстом — "
+            "так я смогу подобрать тебе решение точнее."
+        )
+        return
+
     # Записываем ответ под ключом вопроса
-    answers[q["key"]] = message.text.strip()
+    answers[q["key"]] = answer
     await state.update_data(answers=answers)
 
     # Двигаемся к следующему вопросу или завершаем

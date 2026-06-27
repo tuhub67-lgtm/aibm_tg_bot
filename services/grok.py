@@ -10,6 +10,8 @@ Grok совместим с форматом OpenAI, поэтому работа�
 Если ключа нет или сервис упал — бот не сломается, просто пропустит этот шаг.
 """
 
+import asyncio
+
 import httpx
 from loguru import logger
 
@@ -32,7 +34,13 @@ SYSTEM_PROMPT = """Ты — личный ассистент Тимура, пре
 - Аудитория: малый бизнес Новороссии — салоны, магазины, услуги, общепит.
 - Тон: личный, тёплый, доверительный, на «ты», по-братски. Без корпоративного пафоса и канцелярита.
 
-ТВОЯ ЗАДАЧА: проанализировать ответы клиента из брифа и вернуть ответ СТРОГО в таком формате:
+Клиент проходит подробный бриф из 35 вопросов в 6 разделах (общая информация, текущие процессы,
+боли и проблемы, цели, технические детали, бюджет и сроки). Часть вопросов клиент мог пропустить —
+это нормально, работай с тем, что есть.
+
+ТВОЯ ЗАДАЧА: внимательно учесть ВСЕ присланные ответы клиента (а не только боли) — его город,
+размер команды, текущие каналы, конверсию, цели в цифрах, бюджет и сроки — и вернуть ответ
+СТРОГО в таком формате:
 
 🔥 ГЛАВНЫЕ БОЛИ:
 - (2-3 пункта, конкретно, словами клиента)
@@ -74,21 +82,30 @@ async def analyze_brief(answers: dict) -> str:
         "Content-Type": "application/json",
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                f"{config.grok_base_url}/chat/completions",
-                json=payload,
-                headers=headers,
+    # Делаем до 2 попыток: если Grok не ответил — ждём 5 секунд и пробуем ещё раз
+    for attempt in range(1, 3):
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                response = await client.post(
+                    f"{config.grok_base_url}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                )
+                response.raise_for_status()
+                data = response.json()
+                result = data["choices"][0]["message"]["content"].strip()
+                logger.info("🤖 Grok успешно проанализировал заявку")
+                return result
+        except httpx.HTTPStatusError as e:
+            # Ошибка вроде 401 (неверный ключ) — повторять смысла нет, выходим сразу
+            logger.error(
+                f"❌ Grok вернул ошибку {e.response.status_code}: {e.response.text[:200]}"
             )
-            response.raise_for_status()
-            data = response.json()
-            result = data["choices"][0]["message"]["content"].strip()
-            logger.info("🤖 Grok успешно проанализировал заявку")
-            return result
-    except httpx.HTTPStatusError as e:
-        logger.error(f"❌ Grok вернул ошибку {e.response.status_code}: {e.response.text[:200]}")
-    except Exception as e:
-        logger.error(f"❌ Не смог достучаться до Grok: {e}")
+            break
+        except Exception as e:
+            # Сетевые ошибки/таймауты — имеет смысл повторить
+            logger.error(f"❌ Попытка {attempt}/2 достучаться до Grok не удалась: {e}")
+            if attempt < 2:
+                await asyncio.sleep(5)
 
     return ""
